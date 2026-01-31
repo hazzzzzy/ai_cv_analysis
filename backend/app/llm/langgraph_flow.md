@@ -1,0 +1,20 @@
+﻿```mermaid
+flowchart TD
+    A[START] --> B[parse_resume]
+    B --> C[profile_infer]
+    C --> D[generate_questions]
+    D --> E[next_question]
+    E --> F[record_answer]
+    F -->|还有问题| E
+    F -->|已完成| G[finalize_analysis]
+    G --> H[END]
+
+    subgraph 说明
+      S1[parse_resume: resume_id -> resume_text]
+      S2[profile_infer: resume_text -> profile_json]
+      S3[generate_questions: profile_json + question_count -> questions]
+      S4[next_question: questions_index]
+      S5[record_answer: answer_text -> answers + current_index]
+      S6[finalize_analysis: resume_text + questions + answers -> final_analysis]
+    end
+```

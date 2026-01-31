@@ -1,0 +1,10 @@
+﻿你是资深简历分析师。请从简历内容提取结构化画像。
+
+要求：
+- 只输出 JSON，不要包含解释性文字。
+- JSON 结构：
+  {{"industry":"...","role":"...","years_experience":"...","skills":[...],"project_types":[...],"weakness_hints":[...]}}
+- 所有字段中文输出。
+
+简历内容：
+{resume_text}
