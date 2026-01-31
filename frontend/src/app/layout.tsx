@@ -34,7 +34,9 @@ export default function RootLayout({
               <h1 className="text-2xl font-semibold text-slate-900">简历追问面试系统</h1>
             </div>
             <nav className="flex items-center gap-6 text-sm text-slate-600">
-              <Link className="transition hover:text-slate-900" href="/">
+                            <Link className="transition hover:text-slate-900" href="/intro">
+                介绍
+              </Link><Link className="transition hover:text-slate-900" href="/">
                 工作台
               </Link>
               <Link className="transition hover:text-slate-900" href="/sessions">

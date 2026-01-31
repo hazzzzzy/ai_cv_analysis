@@ -18,6 +18,7 @@ class PainPoint(BaseModel):
     title: str
     evidence: str
     impact: str
+    priority: int
 
 
 class OptimizationSuggestion(BaseModel):
@@ -30,6 +31,7 @@ class ImprovementDirection(BaseModel):
     direction: str
     roadmap_30d: List[str] = Field(default_factory=list)
     roadmap_90d: List[str] = Field(default_factory=list)
+    priority: int
 
 
 class AnalysisResult(BaseModel):

@@ -65,6 +65,8 @@ class SessionService:
         session: AsyncSession,
         resume_id: int,
         question_count: int,
+        job_title: str,
+        job_description: str,
     ) -> Tuple[Session, dict]:
         resume = await session.get(Resume, resume_id)
         if resume is None:
@@ -73,6 +75,8 @@ class SessionService:
         new_session = Session(
             resume_id=resume_id,
             question_count=question_count,
+            job_title=job_title,
+            job_description=job_description,
             status='in_progress',
             current_index=0,
             llm_plan={},
@@ -85,6 +89,8 @@ class SessionService:
             questions, raw_output = _graph.generate_questions(
                 resume_text=resume.extracted_text or '',
                 question_count=question_count,
+                job_title=job_title,
+                job_description=job_description,
             )
             if len(questions) != question_count:
                 raise RuntimeError('生成问题数量不符合要求')
@@ -225,6 +231,8 @@ class SessionService:
                 resume_text=(resume.extracted_text if resume else ''),
                 questions=[Question(**item) for item in question_models],
                 answers=answers,
+                job_title=db_session.job_title or '',
+                job_description=db_session.job_description or '',
             )
         except Exception as exc:
             await SessionService._mark_failed(session, db_session, f'生成最终分析失败: {exc}')
@@ -284,10 +292,14 @@ class SessionService:
         resume_text: str,
         question_count: int,
         answers_input: List[str],
+        job_title: str,
+        job_description: str,
     ) -> dict:
         final_result = _graph.run_full_interview(
             resume_text=resume_text,
             question_count=question_count,
             answers_input=answers_input,
+            job_title=job_title,
+            job_description=job_description,
         )
         return final_result.model_dump()

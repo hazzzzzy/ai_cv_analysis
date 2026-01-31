@@ -119,13 +119,144 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html,
   body {
-    @apply bg-background text-foreground;
+    @apply h-full overflow-hidden bg-background text-foreground;
   }
+  #__next,
+  body > div:first-child {
+    height: 100%;
+  }
+}
+
+.input-focus-ring:hover,
+.input-focus-ring:focus-visible {
+  @apply border-slate-300;
 }
 
 @layer utilities {
   .glass-panel {
     @apply rounded-3xl border border-white/60 bg-white/70 shadow-[0_24px_60px_-40px_rgba(15,23,42,0.5)];
+  }
+
+  .loader {
+    width: 20px;
+    height: 20px;
+    border-radius: 999px;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    border-top-color: rgba(255, 255, 255, 0.9);
+    animation: spin 0.9s linear infinite;
+  }
+
+  .message-pop {
+    animation: message-pop 0.3s ease-out;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes message-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+:root {
+  --priority-high: oklch(0.74 0.19 34.4);
+  --priority-medium: oklch(0.78 0.16 88.2);
+  --priority-low: oklch(0.78 0.14 150.4);
+}
+
+.priority-badge {
+  @apply inline-flex items-center rounded-full px-2 py-1 text-xs font-medium text-slate-900;
+  background: var(--priority-low);
+}
+
+.priority-badge[data-level="high"] {
+  background: var(--priority-high);
+}
+
+.priority-badge[data-level="medium"] {
+  background: var(--priority-medium);
+}
+
+.priority-badge[data-level="low"] {
+  background: var(--priority-low);
+}
+
+.panel-shell {
+  @apply rounded-3xl border border-slate-200/70 bg-white/95 shadow-sm;
+}
+
+.panel-section + .panel-section {
+  @apply border-t border-slate-200/70;
+}
+
+.panel-section {
+  @apply px-6 py-4;
+}
+
+.panel-title {
+  @apply text-xs font-semibold uppercase tracking-wide text-slate-500;
+}
+
+.panel-group-title {
+  @apply text-sm font-semibold text-slate-900;
+}
+
+.form-label {
+  @apply text-xs text-slate-500;
+}
+
+.form-label-required::after {
+  content: " *";
+  @apply text-rose-500;
+}
+
+.input-focus-ring {
+  @apply focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-0;
+}
+
+.clickable {
+  cursor: pointer;
+}
+
+.disabled\:not-allowed:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.sidebar-scroll {
+  height: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+}
+
+.main-fixed {
+  height: 100%;
+}
+
+.message-system {
+  @apply flex justify-center;
+}
+
+.message-system-bubble {
+  @apply flex items-center gap-3 rounded-full border border-slate-200 bg-white px-4 py-2 text-xs text-slate-600 shadow-sm;
+}
+
+@media (max-width: 1024px) {
+  .sidebar-scroll {
+    max-height: none;
+  }
+  .main-fixed {
+    height: auto;
   }
 }

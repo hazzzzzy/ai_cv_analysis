@@ -26,6 +26,8 @@ class Profile(BaseModel):
 class QuestionState(TypedDict):
     resume_text: str
     question_count: int
+    job_title: str
+    job_description: str
     profile_json: dict
     questions: List[Question]
     raw_output: str
@@ -33,6 +35,8 @@ class QuestionState(TypedDict):
 
 class AnalysisState(TypedDict):
     resume_text: str
+    job_title: str
+    job_description: str
     questions: List[Question]
     answers: List[dict]
     final_analysis: AnalysisResult
@@ -42,6 +46,8 @@ class AnalysisState(TypedDict):
 class InterviewState(TypedDict):
     resume_text: str
     question_count: int
+    job_title: str
+    job_description: str
     expert_domains: List[str]
     profile_json: dict
     questions: List[Question]
@@ -87,7 +93,11 @@ class InterviewGraph:
 
         def profile_infer(state: QuestionState) -> dict:
             template = self._load_prompt('profile.txt')
-            prompt = template.format(resume_text=state['resume_text'])
+            prompt = template.format(
+                resume_text=state['resume_text'],
+                job_title=state['job_title'],
+                job_description=state['job_description'],
+            )
             adapter = TypeAdapter(Profile)
             result = self._invoke_json(prompt, adapter, max_retries=2)
             return {'profile_json': result.value.model_dump(), 'raw_output': result.raw}
@@ -98,6 +108,8 @@ class InterviewGraph:
                 resume_text=state['resume_text'],
                 question_count=state['question_count'],
                 profile_json=json.dumps(state.get('profile_json', {}), ensure_ascii=False),
+                job_title=state['job_title'],
+                job_description=state['job_description'],
             )
             adapter = TypeAdapter(List[Question])
             result = self._invoke_json(prompt, adapter, max_retries=2)
@@ -117,6 +129,8 @@ class InterviewGraph:
             template = self._load_prompt('analysis.txt')
             prompt = template.format(
                 resume_text=state['resume_text'],
+                job_title=state['job_title'],
+                job_description=state['job_description'],
                 questions_json=json.dumps(
                     [q.model_dump() for q in state['questions']],
                     ensure_ascii=False,
@@ -140,7 +154,11 @@ class InterviewGraph:
 
         def profile_infer(state: InterviewState) -> dict:
             template = self._load_prompt('profile.txt')
-            prompt = template.format(resume_text=state['resume_text'])
+            prompt = template.format(
+                resume_text=state['resume_text'],
+                job_title=state['job_title'],
+                job_description=state['job_description'],
+            )
             adapter = TypeAdapter(Profile)
             result = self._invoke_json(prompt, adapter, max_retries=2)
             return {'profile_json': result.value.model_dump()}
@@ -151,6 +169,8 @@ class InterviewGraph:
                 resume_text=state['resume_text'],
                 question_count=state['question_count'],
                 profile_json=json.dumps(state.get('profile_json', {}), ensure_ascii=False),
+                job_title=state['job_title'],
+                job_description=state['job_description'],
             )
             adapter = TypeAdapter(List[Question])
             result = self._invoke_json(prompt, adapter, max_retries=2)
@@ -177,6 +197,8 @@ class InterviewGraph:
             template = self._load_prompt('analysis.txt')
             prompt = template.format(
                 resume_text=state['resume_text'],
+                job_title=state['job_title'],
+                job_description=state['job_description'],
                 questions_json=json.dumps(
                     [q.model_dump() for q in state['questions']],
                     ensure_ascii=False,
@@ -215,11 +237,19 @@ class InterviewGraph:
         graph.add_edge('finalize_analysis', END)
         return graph.compile()
 
-    def generate_questions(self, resume_text: str, question_count: int) -> tuple[List[Question], str]:
+    def generate_questions(
+        self,
+        resume_text: str,
+        question_count: int,
+        job_title: str,
+        job_description: str,
+    ) -> tuple[List[Question], str]:
         result = self._questions_graph.invoke(
             {
                 'resume_text': resume_text,
                 'question_count': question_count,
+                'job_title': job_title,
+                'job_description': job_description,
                 'profile_json': {},
                 'questions': [],
                 'raw_output': '',
@@ -232,10 +262,14 @@ class InterviewGraph:
         resume_text: str,
         questions: List[Question],
         answers: List[dict],
+        job_title: str,
+        job_description: str,
     ) -> tuple[AnalysisResult, str]:
         result = self._analysis_graph.invoke(
             {
                 'resume_text': resume_text,
+                'job_title': job_title,
+                'job_description': job_description,
                 'questions': questions,
                 'answers': answers,
                 'final_analysis': AnalysisResult(
@@ -256,12 +290,16 @@ class InterviewGraph:
         resume_text: str,
         question_count: int,
         answers_input: List[str],
+        job_title: str,
+        job_description: str,
     ) -> AnalysisResult:
         graph = self._build_interview_graph()
         result = graph.invoke(
             {
                 'resume_text': resume_text,
                 'question_count': question_count,
+                'job_title': job_title,
+                'job_description': job_description,
                 'expert_domains': [],
                 'profile_json': {},
                 'questions': [],

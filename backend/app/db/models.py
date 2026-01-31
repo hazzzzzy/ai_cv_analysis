@@ -48,6 +48,8 @@ class Session(Base, TimestampMixin):
         nullable=False,
     )
     question_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    job_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    job_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default='in_progress')
     current_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     llm_plan: Mapped[dict | None] = mapped_column(MySQLJSON, nullable=True)

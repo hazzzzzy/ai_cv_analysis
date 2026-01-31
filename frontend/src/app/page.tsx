@@ -1,24 +1,10 @@
 ﻿"use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import Link from "next/link";
-import {
-  Alert,
-  AlertDescription,
-  AlertTitle,
-} from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Progress } from "@/components/ui/progress";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -29,16 +15,65 @@ import {
   uploadResume,
 } from "@/lib/api";
 
-const QUESTION_COUNTS = [3, 4, 5, 6, 7, 8, 9, 10];
+const QUESTION_MIN = 3;
+const QUESTION_MAX = 10;
 
-type Step = "upload" | "questionCount" | "answer" | "result";
+type AppState =
+  | "idle"
+  | "uploaded"
+  | "preparing"
+  | "interviewing"
+  | "discussing"
+  | "completed"
+  | "failed";
+
+type ViewMode = "chat" | "analysis";
+
+type ChatItem = {
+  id: string;
+  role: "assistant" | "user" | "system";
+  kind: "question" | "answer" | "final" | "status";
+  content: string;
+  meta?: Record<string, unknown> | null;
+};
+
+type FieldErrors = {
+  resume?: string;
+  jobTitle?: string;
+  jobDescription?: string;
+};
+
+const STATUS_LABEL: Record<AppState, string> = {
+  idle: "未开始",
+  uploaded: "已上传",
+  preparing: "准备中",
+  interviewing: "面试中",
+  discussing: "生成结果中",
+  completed: "已完成",
+  failed: "失败（可重试）",
+};
+
+const STATUS_COPY: Record<"preparing" | "discussing", string> = {
+  preparing: "面试官正在准备问题…",
+  discussing: "面试官正在生成最终分析…",
+};
+
+const PRIORITY_LABEL: Record<number, { label: string; level: "high" | "medium" | "low" }> = {
+  1: { label: "紧急", level: "high" },
+  2: { label: "重要", level: "medium" },
+  3: { label: "一般", level: "low" },
+};
 
 export default function HomePage() {
-  const [step, setStep] = useState<Step>("upload");
+  const [appState, setAppState] = useState<AppState>("idle");
+  const [viewMode, setViewMode] = useState<ViewMode>("chat");
   const [file, setFile] = useState<File | null>(null);
   const [resumeId, setResumeId] = useState<number | null>(null);
   const [preview, setPreview] = useState<string>("");
-  const [questionCount, setQuestionCount] = useState<number>(3);
+  const [previewOpen, setPreviewOpen] = useState(true);
+  const [questionCount, setQuestionCount] = useState<number>(QUESTION_MIN);
+  const [jobTitle, setJobTitle] = useState<string>("");
+  const [jobDescription, setJobDescription] = useState<string>("");
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [currentQuestion, setCurrentQuestion] = useState<Question | null>(null);
   const [currentIndex, setCurrentIndex] = useState<number>(0);
@@ -46,40 +81,202 @@ export default function HomePage() {
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
+  const [chatLog, setChatLog] = useState<ChatItem[]>([]);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const chatScrollTop = useRef<number>(0);
+  const analysisScrollTop = useRef<number>(0);
+  const sidebarRef = useRef<HTMLDivElement | null>(null);
+  const jobTitleRef = useRef<HTMLInputElement | null>(null);
+  const jobDescRef = useRef<HTMLTextAreaElement | null>(null);
 
-  const progress = useMemo(() => {
-    if (step !== "answer") return 0;
-    return Math.min(100, (currentIndex / questionCount) * 100);
-  }, [step, currentIndex, questionCount]);
+  const isEditable = appState === "idle" || appState === "uploaded" || appState === "failed";
+  const isLocked = appState === "preparing" || appState === "discussing";
+  const canStart = Boolean(resumeId && jobTitle.trim() && jobDescription.trim());
+
+  useEffect(() => {
+    if (viewMode === "chat" && chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = chatScrollTop.current;
+      return;
+    }
+    if (viewMode === "analysis" && chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = analysisScrollTop.current;
+    }
+  }, [viewMode]);
+
+  useEffect(() => {
+    if (viewMode !== "chat") return;
+    if (!chatEndRef.current) return;
+    chatEndRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [chatLog, appState, viewMode]);
+
+  const resetAll = () => {
+    setAppState("idle");
+    setViewMode("chat");
+    setFile(null);
+    setResumeId(null);
+    setPreview("");
+    setPreviewOpen(true);
+    setQuestionCount(QUESTION_MIN);
+    setJobTitle("");
+    setJobDescription("");
+    setSessionId(null);
+    setCurrentQuestion(null);
+    setCurrentIndex(0);
+    setAnswer("");
+    setAnalysis(null);
+    setError(null);
+    setFieldErrors({});
+    setUploadProgress(0);
+    setChatLog([]);
+    chatScrollTop.current = 0;
+    analysisScrollTop.current = 0;
+  };
+
+  const handleFilePick = (picked: File | null) => {
+    setFile(picked);
+    if (!picked) return;
+    setError(null);
+    setFieldErrors((prev) => ({ ...prev, resume: undefined }));
+  };
+
+  const startFakeProgress = () => {
+    setUploadProgress(12);
+    let value = 12;
+    const timer = setInterval(() => {
+      value = Math.min(92, value + 10);
+      setUploadProgress(value);
+    }, 220);
+    return timer;
+  };
+
+  const appendSystemStatus = (content: string) => {
+    setChatLog((prev) => [
+      ...prev,
+      {
+        id: `sys-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        role: "system",
+        kind: "status",
+        content,
+      },
+    ]);
+  };
+
+  const removeLastSystemStatus = () => {
+    setChatLog((prev) => {
+      const index = [...prev].reverse().findIndex((item) => item.role === "system");
+      if (index === -1) return prev;
+      const realIndex = prev.length - 1 - index;
+      return prev.filter((_, idx) => idx !== realIndex);
+    });
+  };
 
   const handleUpload = async () => {
     if (!file) return;
     setError(null);
     setLoading(true);
+    const timer = startFakeProgress();
     try {
       const data = await uploadResume(file);
       setResumeId(data.resume_id);
       setPreview(data.extracted_preview || "暂无预览内容");
-      setStep("questionCount");
+      setPreviewOpen(true);
+      setAppState("uploaded");
+      setUploadProgress(100);
     } catch (err) {
       setError(err instanceof Error ? err.message : "上传失败");
+      setAppState("failed");
     } finally {
+      clearInterval(timer);
       setLoading(false);
+      setTimeout(() => setUploadProgress(0), 800);
     }
   };
 
+  const handleResetUpload = () => {
+    if (!isEditable) return;
+    setFile(null);
+    setResumeId(null);
+    setPreview("");
+    setPreviewOpen(true);
+    setUploadProgress(0);
+    setAppState("idle");
+  };
+
+  const focusField = (field: "jobTitle" | "jobDescription" | "resume") => {
+    if (field === "resume") {
+      sidebarRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    if (field === "jobTitle") {
+      jobTitleRef.current?.focus();
+      jobTitleRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    jobDescRef.current?.focus();
+    jobDescRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+
+  const validateBeforeStart = () => {
+    const errors: FieldErrors = {};
+    if (!resumeId) {
+      errors.resume = "请上传简历";
+    }
+    if (!jobTitle.trim()) {
+      errors.jobTitle = "请填写面试岗位";
+    }
+    if (!jobDescription.trim()) {
+      errors.jobDescription = "请填写岗位介绍";
+    }
+    setFieldErrors(errors);
+    const firstError = errors.resume
+      ? "resume"
+      : errors.jobTitle
+      ? "jobTitle"
+      : errors.jobDescription
+      ? "jobDescription"
+      : null;
+    if (firstError) {
+      focusField(firstError);
+      return false;
+    }
+    return true;
+  };
+
   const handleCreateSession = async () => {
+    if (!validateBeforeStart()) return;
     if (!resumeId) return;
     setError(null);
     setLoading(true);
+    setAppState("preparing");
+    appendSystemStatus(STATUS_COPY.preparing);
     try {
-      const data = await createSession(resumeId, questionCount);
+      const data = await createSession(
+        resumeId,
+        questionCount,
+        jobTitle.trim(),
+        jobDescription.trim()
+      );
+      removeLastSystemStatus();
       setSessionId(data.session_id);
       setCurrentQuestion(data.current_question);
       setCurrentIndex(0);
-      setStep("answer");
+      setChatLog((prev) => [
+        ...prev,
+        {
+          id: `q-${data.current_question.id}`,
+          role: "assistant",
+          kind: "question",
+          content: data.current_question.question,
+          meta: data.current_question,
+        },
+      ]);
+      setAppState("interviewing");
     } catch (err) {
       setError(err instanceof Error ? err.message : "创建会话失败");
+      setAppState("failed");
     } finally {
       setLoading(false);
     }
@@ -92,261 +289,471 @@ export default function HomePage() {
       return;
     }
     setError(null);
+    const answerText = answer.trim();
+    setAnswer("");
+    setChatLog((prev) => [
+      ...prev,
+      {
+        id: `a-${currentQuestion.id}-${Date.now()}`,
+        role: "user",
+        kind: "answer",
+        content: answerText,
+        meta: { question_id: currentQuestion.id },
+      },
+    ]);
+    const isLast = currentIndex + 1 >= questionCount;
+    if (isLast) {
+      setAppState("discussing");
+      appendSystemStatus(STATUS_COPY.discussing);
+    }
     setLoading(true);
     try {
-      const data = await submitAnswer(sessionId, currentQuestion.id, answer.trim());
-      setAnswer("");
+      const data = await submitAnswer(sessionId, currentQuestion.id, answerText);
       if (data.status === "completed") {
+        removeLastSystemStatus();
         setAnalysis(data.final_analysis);
-        setStep("result");
+        setAppState("completed");
+        setViewMode("analysis");
       } else {
         setCurrentIndex(data.current_index);
         setCurrentQuestion(data.next_question);
+        setAppState("interviewing");
+        setChatLog((prev) => [
+          ...prev,
+          {
+            id: `q-${data.next_question.id}`,
+            role: "assistant",
+            kind: "question",
+            content: data.next_question.question,
+            meta: data.next_question,
+          },
+        ]);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "提交失败");
+      setAppState("failed");
     } finally {
       setLoading(false);
     }
   };
 
-  const resetAll = () => {
-    setStep("upload");
-    setFile(null);
-    setResumeId(null);
-    setPreview("");
-    setQuestionCount(3);
-    setSessionId(null);
-    setCurrentQuestion(null);
-    setCurrentIndex(0);
-    setAnswer("");
-    setAnalysis(null);
-    setError(null);
+  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    if (!isEditable) return;
+    const dropped = event.dataTransfer.files?.[0];
+    if (dropped) {
+      handleFilePick(dropped);
+    }
+  };
+
+  const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+  };
+
+  const fileInfo = useMemo(() => {
+    if (!file) return null;
+    const sizeKb = Math.round(file.size / 1024);
+    return `${file.name} · ${sizeKb} KB · ${file.type || "未知类型"}`;
+  }, [file]);
+
+  const handleScroll = () => {
+    if (!chatScrollRef.current) return;
+    if (viewMode === "chat") {
+      chatScrollTop.current = chatScrollRef.current.scrollTop;
+    } else {
+      analysisScrollTop.current = chatScrollRef.current.scrollTop;
+    }
+  };
+
+  const resolvePriority = (priority: number | undefined) => {
+    if (!priority) return { label: "一般", level: "low" } as const;
+    return PRIORITY_LABEL[priority] || { label: "一般", level: "low" };
   };
 
   return (
-    <div className="grid gap-8">
-      <section className="glass-panel p-8">
-        <div className="flex flex-wrap items-center justify-between gap-6">
-          <div className="max-w-xl space-y-3">
-            <Badge className="rounded-full bg-slate-900 text-white">全流程模拟</Badge>
-            <h2 className="text-3xl font-semibold text-slate-900">
-              上传简历，生成专家追问，拿到结构化改进方向
-            </h2>
-            <p className="text-sm text-slate-600">
-              系统会基于简历内容生成 3-10 条高信号问题，逐题作答后输出痛点、优化建议与改进路线图。
-            </p>
-          </div>
-          <div className="rounded-3xl border border-slate-200 bg-white/80 px-6 py-4 text-sm text-slate-600 shadow-sm">
-            <div className="font-medium text-slate-900">今日流程</div>
-            <div>上传 → 选题 → 作答 → 诊断</div>
-          </div>
-        </div>
-      </section>
+    <div className="flex h-screen min-h-0 flex-col overflow-hidden px-2 py-2">
 
-      {error && (
-        <Alert variant="destructive">
-          <AlertTitle>操作失败</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
+      <div className="grid h-[calc(90vh-96px)] min-h-0 gap-3 lg:grid-cols-[minmax(260px,360px)_1fr]">
+        <aside className="panel-shell sidebar-scroll h-full" ref={sidebarRef}>
+          <div className="panel-section">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="panel-group-title">上传与配置</div>
+              </div>
+              <Badge variant="outline">{STATUS_LABEL[appState]}</Badge>
+            </div>
+          </div>
 
-      <section className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-        <Card className="border-slate-200/70 bg-white/80">
-          <CardHeader>
-            <CardTitle>步骤 1：上传简历</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Input
-              type="file"
-              accept=".pdf,.docx"
-              onChange={(event) => setFile(event.target.files?.[0] || null)}
-            />
-            <div className="flex flex-wrap items-center gap-3">
-              <Button disabled={!file || loading} onClick={handleUpload}>
-                {loading && step === "upload" ? "上传中..." : "上传并解析"}
+          <div className="panel-section space-y-4">
+            <div
+              onDrop={handleDrop}
+              onDragOver={handleDragOver}
+              className={`rounded-2xl border border-dashed p-4 text-center text-sm transition ${
+                isEditable
+                  ? "border-slate-300 bg-slate-50/70 text-slate-600"
+                  : "border-slate-200 bg-slate-100 text-slate-400"
+              }`}
+            >
+              <p className="font-medium text-slate-700">拖拽或点击上传 PDF/DOCX</p>
+              <p className="mt-1 text-xs text-slate-500">最大 10MB，上传后会生成解析预览</p>
+              <Input
+                type="file"
+                accept=".pdf,.docx"
+                disabled={!isEditable}
+                onChange={(event) => handleFilePick(event.target.files?.[0] || null)}
+                className="mt-3 cursor-pointer clickable disabled:not-allowed"
+              />
+            </div>
+            {fieldErrors.resume && (
+              <p className="text-xs text-rose-600">{fieldErrors.resume}</p>
+            )}
+            {fileInfo && <div className="text-xs text-slate-500">{fileInfo}</div>}
+            {uploadProgress > 0 && (
+              <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
+                <div className="h-full bg-slate-900" style={{ width: `${uploadProgress}%` }} />
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <Button
+                onClick={handleUpload}
+                disabled={!file || loading || !isEditable}
+                className="flex-1 clickable disabled:not-allowed"
+              >
+                {loading && appState === "idle" ? "上传中..." : "上传并解析"}
               </Button>
-              {file && (
-                <span className="text-xs text-slate-500">已选择：{file.name}</span>
+              <Button
+                variant="outline"
+                onClick={resetAll}
+                disabled={loading}
+                className="clickable disabled:not-allowed"
+              >
+                重置
+              </Button>
+            </div>
+          </div>
+
+          <div className="panel-section">
+            <div className="flex items-center justify-between">
+              <div className="panel-title">解析预览</div>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setPreviewOpen((prev) => !prev)}
+                className="clickable"
+              >
+                {previewOpen ? "收起" : "展开"}
+              </Button>
+            </div>
+            {previewOpen && (
+              <div className="mt-3 space-y-3 text-xs text-slate-600">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 leading-relaxed">
+                  {preview || "等待上传简历以生成预览"}
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-500">如需替换，可重新上传</span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!isEditable}
+                    onClick={handleResetUpload}
+                    className="clickable disabled:not-allowed"
+                  >
+                    重新上传
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="panel-section space-y-4">
+            <div className="panel-title">面试配置</div>
+            <div className="space-y-2">
+              <label className="form-label form-label-required">问题数量</label>
+              <input
+                type="range"
+                min={QUESTION_MIN}
+                max={QUESTION_MAX}
+                value={questionCount}
+                onChange={(event) => setQuestionCount(Number(event.target.value))}
+                disabled={!isEditable}
+                className="w-full accent-slate-900 clickable disabled:not-allowed"
+              />
+              <div className="flex items-center justify-between text-xs text-slate-500">
+                <span>{QUESTION_MIN}</span>
+                <span className="text-sm font-semibold text-slate-900">{questionCount}</span>
+                <span>{QUESTION_MAX}</span>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <label className="form-label form-label-required">面试岗位</label>
+              <Input
+                ref={jobTitleRef}
+                placeholder="例如：后端工程师"
+                value={jobTitle}
+                onChange={(event) => {
+                  setJobTitle(event.target.value);
+                  setFieldErrors((prev) => ({ ...prev, jobTitle: undefined }));
+                }}
+                disabled={!isEditable}
+                className={`input-focus-ring clickable disabled:not-allowed ${fieldErrors.jobTitle ? "border-rose-400" : ""}`}
+              />
+              {fieldErrors.jobTitle && (
+                <p className="text-xs text-rose-600">{fieldErrors.jobTitle}</p>
               )}
             </div>
-            <Separator />
-            <div className="space-y-2 text-sm text-slate-600">
-              <div className="font-medium text-slate-900">解析预览</div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-4 text-xs leading-relaxed">
-                {preview || "等待上传简历以生成预览"}
-              </div>
+            <div className="space-y-2">
+              <label className="form-label form-label-required">岗位介绍</label>
+              <Textarea
+                ref={jobDescRef}
+                rows={5}
+                placeholder="描述岗位职责、目标、核心技能要求"
+                value={jobDescription}
+                onChange={(event) => {
+                  setJobDescription(event.target.value);
+                  setFieldErrors((prev) => ({ ...prev, jobDescription: undefined }));
+                }}
+                disabled={!isEditable}
+                className={`input-focus-ring clickable disabled:not-allowed h-28 resize-none ${fieldErrors.jobDescription ? "border-rose-400" : ""}`}
+              />
+              {fieldErrors.jobDescription && (
+                <p className="text-xs text-rose-600">{fieldErrors.jobDescription}</p>
+              )}
             </div>
-          </CardContent>
-        </Card>
+          </div>
 
-        <Card className="border-slate-200/70 bg-white/80">
-          <CardHeader>
-            <CardTitle>步骤 2：选择题目数量</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            <Select
-              value={questionCount.toString()}
-              onValueChange={(value) => setQuestionCount(Number(value))}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="选择题目数量" />
-              </SelectTrigger>
-              <SelectContent>
-                {QUESTION_COUNTS.map((count) => (
-                  <SelectItem key={count} value={count.toString()}>
-                    {count} 道问题
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <div className="panel-section sticky top-0 bg-white/95 backdrop-blur">
             <Button
-              disabled={!resumeId || loading}
+              disabled={!canStart || loading || !isEditable}
               onClick={handleCreateSession}
-              className="w-full"
+              className="w-full clickable disabled:not-allowed"
             >
-              {loading && step === "questionCount" ? "生成中..." : "开始面试"}
+              {loading && appState === "preparing" ? "准备中..." : "开始面试"}
             </Button>
-            <div className="text-xs text-slate-500">
-              当前状态：{resumeId ? "已解析" : "等待简历"}
+            <div className="mt-3 text-xs text-slate-500">
+              {canStart ? "配置完成，可开始面试" : "请补全必填项"}
             </div>
-          </CardContent>
-        </Card>
-      </section>
+          </div>
+        </aside>
 
-      <section className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-        <Card className="border-slate-200/70 bg-white/90">
-          <CardHeader>
-            <CardTitle>步骤 3：逐题作答</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            {step !== "answer" && (
-              <div className="text-sm text-slate-500">开始面试后会展示问题。</div>
-            )}
-            {step === "answer" && currentQuestion && (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between text-sm text-slate-500">
-                  <span>第 {currentIndex + 1} / {questionCount} 题</span>
-                  <Badge variant="outline">{currentQuestion.domain}</Badge>
-                </div>
-                <Progress value={progress} className="h-2" />
-                <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
-                  <p className="text-sm font-medium text-slate-900">{currentQuestion.question}</p>
-                  <p className="mt-2 text-xs text-slate-500">{currentQuestion.why_it_matters}</p>
-                </div>
-                <Textarea
-                  rows={6}
-                  placeholder="请输入你的回答..."
-                  value={answer}
-                  onChange={(event) => setAnswer(event.target.value)}
-                />
-                <div className="flex flex-wrap gap-3">
-                  <Button disabled={loading} onClick={handleSubmitAnswer}>
-                    {loading ? "提交中..." : "提交回答"}
-                  </Button>
-                  <Button variant="outline" onClick={resetAll}>
-                    重新开始
-                  </Button>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="border-slate-200/70 bg-white/90">
-          <CardHeader>
-            <CardTitle>快速入口</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4 text-sm text-slate-600">
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <p className="font-medium text-slate-900">历史会话</p>
-              <p className="mt-1 text-xs text-slate-500">查看过去的问答记录与分析结果</p>
-              <Button asChild variant="outline" className="mt-3 w-full">
-                <Link href="/sessions">打开历史列表</Link>
+        <main className="main-fixed h-full min-h-0 space-y-2">
+          {error && (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              {error}
+            </div>
+          )}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-sm font-semibold text-slate-900">对话流</div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant={viewMode === "analysis" ? "default" : "outline"}
+                disabled={!analysis}
+                onClick={() => setViewMode("analysis")}
+                className="clickable disabled:not-allowed"
+              >
+                查看分析结果
+              </Button>
+              <Button
+                size="sm"
+                variant={viewMode === "chat" ? "default" : "outline"}
+                onClick={() => setViewMode("chat")}
+                className="clickable disabled:not-allowed"
+              >
+                查看聊天记录
               </Button>
             </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <p className="font-medium text-slate-900">提示</p>
-              <p className="mt-1 text-xs text-slate-500">
-                回答越具体越好，建议使用 STAR 法描述背景、行动与结果。
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      </section>
+          </div>
 
-      <section>
-        <Card className="border-slate-200/70 bg-white/95">
-          <CardHeader>
-            <CardTitle>步骤 4：诊断结果</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {step !== "result" && (
-              <p className="text-sm text-slate-500">完成所有问题后将展示诊断报告。</p>
-            )}
-            {step === "result" && analysis && (
-              <div className="grid gap-6 lg:grid-cols-3">
-                <div className="space-y-3">
-                  <h3 className="text-sm font-semibold text-slate-900">痛点</h3>
-                  {analysis.pain_points.map((item, index) => (
-                    <Card key={`pain-${index}`} className="border-slate-200/70 bg-slate-50/80">
-                      <CardContent className="space-y-2 p-4 text-xs text-slate-600">
-                        <p className="text-sm font-semibold text-slate-900">{item.title}</p>
-                        <p>证据：{item.evidence}</p>
-                        <p>影响：{item.impact}</p>
-                      </CardContent>
-                    </Card>
-                  ))}
+          <div className="panel-shell flex h-full min-h-0 flex-col overflow-hidden">
+            {viewMode === "chat" && (
+              <div className="flex h-full flex-col">
+                <div
+                  ref={chatScrollRef}
+                  onScroll={handleScroll}
+                  className="flex-1 space-y-3 overflow-auto px-4 py-4"
+                >
+                  {chatLog.length === 0 && (
+                    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 p-4 text-sm text-slate-500">
+                      从左侧配置开始，系统消息与问题会在这里出现。
+                    </div>
+                  )}
+                  {chatLog.map((item) => {
+                    if (item.role === "system") {
+                      return (
+                        <div key={item.id} className="message-system">
+                          <div className="message-system-bubble">
+                            <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
+                            {item.content}
+                          </div>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div
+                        key={item.id}
+                        className={`flex ${item.role === "assistant" ? "justify-start" : "justify-end"}`}
+                      >
+                        <div
+                          className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm shadow-sm message-pop ${
+                            item.role === "assistant"
+                              ? "bg-slate-100 text-slate-900"
+                              : "bg-emerald-100 text-emerald-900"
+                          }`}
+                        >
+                          <div className="text-xs text-slate-500">
+                            {item.role === "assistant" ? "面试官" : "你"} · {item.kind}
+                          </div>
+                          <p className="mt-1 whitespace-pre-wrap leading-relaxed">{item.content}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div ref={chatEndRef} />
                 </div>
-                <div className="space-y-3">
-                  <h3 className="text-sm font-semibold text-slate-900">优化建议</h3>
-                  {analysis.optimization_suggestions.map((item, index) => (
-                    <Card key={`opt-${index}`} className="border-slate-200/70 bg-slate-50/80">
-                      <CardContent className="space-y-2 p-4 text-xs text-slate-600">
-                        <div className="flex items-center justify-between">
-                          <p className="text-sm font-semibold text-slate-900">{item.title}</p>
-                          <Badge variant="outline">优先级 {item.priority}</Badge>
-                        </div>
-                        <ul className="list-disc space-y-1 pl-4">
-                          {item.actions.map((action, idx) => (
-                            <li key={idx}>{action}</li>
-                          ))}
-                        </ul>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-                <div className="space-y-3">
-                  <h3 className="text-sm font-semibold text-slate-900">改进方向</h3>
-                  {analysis.improvement_directions.map((item, index) => (
-                    <Card key={`dir-${index}`} className="border-slate-200/70 bg-slate-50/80">
-                      <CardContent className="space-y-2 p-4 text-xs text-slate-600">
-                        <p className="text-sm font-semibold text-slate-900">{item.direction}</p>
-                        <div>
-                          <p className="font-medium text-slate-700">30 天</p>
-                          <ul className="list-disc space-y-1 pl-4">
-                            {item.roadmap_30d.map((stepItem, idx) => (
-                              <li key={idx}>{stepItem}</li>
-                            ))}
-                          </ul>
-                        </div>
-                        <div>
-                          <p className="font-medium text-slate-700">90 天</p>
-                          <ul className="list-disc space-y-1 pl-4">
-                            {item.roadmap_90d.map((stepItem, idx) => (
-                              <li key={idx}>{stepItem}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                <div className="border-t border-slate-200 bg-white/95 px-4 py-4">
+                  <div className="text-xs text-slate-500">当前回答</div>
+                  <Textarea
+                    rows={4}
+                    placeholder="请输入你的回答，建议围绕背景/行动/结果展开"
+                    value={answer}
+                    onChange={(event) => setAnswer(event.target.value)}
+                    disabled={loading || isLocked || appState !== "interviewing"}
+                    className="input-focus-ring clickable disabled:not-allowed mt-2 h-24 resize-none"
+                  />
+                  <div className="mt-3 flex flex-wrap gap-3">
+                    <Button
+                      disabled={loading || isLocked || appState !== "interviewing"}
+                      onClick={handleSubmitAnswer}
+                      className="clickable disabled:not-allowed"
+                    >
+                      {loading ? "提交中..." : "提交回答"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={resetAll}
+                      disabled={loading}
+                      className="clickable disabled:not-allowed"
+                    >
+                      重新开始
+                    </Button>
+                  </div>
                 </div>
               </div>
             )}
-          </CardContent>
-        </Card>
-      </section>
+
+            {viewMode === "analysis" && (
+              <div
+                ref={chatScrollRef}
+                onScroll={handleScroll}
+                className="flex-1 overflow-auto px-4 py-4"
+              >
+                {!analysis && (
+                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 p-4 text-sm text-slate-500">
+                    完成全部问题后将在此展示分析报告。
+                  </div>
+                )}
+                {analysis && (
+                  <div className="space-y-6">
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-semibold text-slate-900">痛点</h3>
+                      <div className="space-y-3">
+                        {analysis.pain_points.map((item, index) => {
+                          const priority = resolvePriority(item.priority);
+                          return (
+                            <div key={`pain-${index}`} className="rounded-2xl border border-slate-200/70 bg-slate-50/80 p-4 text-sm text-slate-700">
+                              <div className="flex flex-wrap items-center gap-3">
+                                <span className="text-sm font-semibold text-slate-900">{item.title}</span>
+                                <span className="priority-badge" data-level={priority.level}>
+                                  {priority.label}
+                                </span>
+                              </div>
+                              <div className="mt-2 space-y-1 text-xs">
+                                <p>
+                                  <span className="font-semibold text-slate-700">证据：</span>
+                                  <span className="underline decoration-amber-400 decoration-2">{item.evidence}</span>
+                                </p>
+                                <p>
+                                  <span className="font-semibold text-slate-700">影响：</span>
+                                  <span className="italic text-slate-700">{item.impact}</span>
+                                </p>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <Separator />
+
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-semibold text-slate-900">优化建议</h3>
+                      <div className="space-y-3">
+                        {analysis.optimization_suggestions.map((item, index) => {
+                          const priority = resolvePriority(item.priority);
+                          return (
+                            <div key={`opt-${index}`} className="rounded-2xl border border-slate-200/70 bg-slate-50/80 p-4 text-sm text-slate-700">
+                              <div className="flex flex-wrap items-center gap-3">
+                                <span className="text-sm font-semibold text-slate-900">{item.title}</span>
+                                <span className="priority-badge" data-level={priority.level}>
+                                  {priority.label}
+                                </span>
+                              </div>
+                              <ul className="mt-2 list-disc space-y-1 pl-4 text-xs">
+                                {item.actions.map((action, idx) => (
+                                  <li key={idx}>{action}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <Separator />
+
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-semibold text-slate-900">改进方向</h3>
+                      <div className="space-y-3">
+                        {analysis.improvement_directions.map((item, index) => {
+                          const priority = resolvePriority(item.priority);
+                          return (
+                            <div key={`dir-${index}`} className="rounded-2xl border border-slate-200/70 bg-slate-50/80 p-4 text-sm text-slate-700">
+                              <div className="flex flex-wrap items-center gap-3">
+                                <span className="text-sm font-semibold text-slate-900">{item.direction}</span>
+                                <span className="priority-badge" data-level={priority.level}>
+                                  {priority.label}
+                                </span>
+                              </div>
+                              <div className="mt-2 space-y-2 text-xs">
+                                <div>
+                                  <p className="font-medium text-slate-700">30 天路线</p>
+                                  <ul className="list-disc space-y-1 pl-4">
+                                    {item.roadmap_30d.map((stepItem, idx) => (
+                                      <li key={idx}>{stepItem}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                                <div>
+                                  <p className="font-medium text-slate-700">90 天路线</p>
+                                  <ul className="list-disc space-y-1 pl-4">
+                                    {item.roadmap_90d.map((stepItem, idx) => (
+                                      <li key={idx}>{stepItem}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </main>
+      </div>
     </div>
   );
 }

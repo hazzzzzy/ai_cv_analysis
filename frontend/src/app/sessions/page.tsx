@@ -13,6 +13,12 @@ export default function SessionsPage() {
   const [items, setItems] = useState<SessionItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const statusLabel = (status: string) => {
+    if (status === "completed") return "已完成";
+    if (status === "failed") return "失败";
+    if (status === "in_progress") return "面试中";
+    return "面试中";
+  };
 
   useEffect(() => {
     let active = true;
@@ -35,18 +41,18 @@ export default function SessionsPage() {
   }, []);
 
   return (
-    <div className="grid gap-6">
-      <Card className="border-slate-200/70 bg-white/90">
-        <CardHeader className="flex flex-row items-center justify-between">
+    <div className="flex h-[calc(95vh-96px)] flex-col overflow-hidden px-2 py-2">
+
+
+      <div className="panel-shell min-h-0 flex-1">
+        <div className="panel-section flex flex-row items-center justify-between">
           <div>
-            <CardTitle>历史会话</CardTitle>
-            <p className="text-sm text-slate-500">查看最近生成的追问与分析结果</p>
+            <div className="panel-title">历史会话</div>
+            <div className="panel-group-title">最近问答记录</div>
           </div>
-          <Button asChild variant="outline">
-            <Link href="/">回到工作台</Link>
-          </Button>
-        </CardHeader>
-        <CardContent>
+
+        </div>
+        <div className="panel-section">
           {loading && (
             <div className="space-y-3">
               <Skeleton className="h-10 w-full" />
@@ -65,6 +71,7 @@ export default function SessionsPage() {
                 <TableRow>
                   <TableHead>会话 ID</TableHead>
                   <TableHead>简历 ID</TableHead>
+                  <TableHead>岗位</TableHead>
                   <TableHead>题数</TableHead>
                   <TableHead>进度</TableHead>
                   <TableHead>状态</TableHead>
@@ -76,17 +83,22 @@ export default function SessionsPage() {
                   <TableRow key={item.id}>
                     <TableCell className="font-mono text-xs">#{item.id}</TableCell>
                     <TableCell className="font-mono text-xs">{item.resume_id}</TableCell>
+                    <TableCell>
+                      <span className="text-sm text-slate-700">
+                        {item.job_title || "未填写"}
+                      </span>
+                    </TableCell>
                     <TableCell>{item.question_count}</TableCell>
                     <TableCell>
                       {item.current_index}/{item.question_count}
                     </TableCell>
                     <TableCell>
                       <Badge variant={item.status === "completed" ? "default" : "outline"}>
-                        {item.status}
+                        {statusLabel(item.status)}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button asChild size="sm" variant="secondary">
+                      <Button asChild size="sm" variant="secondary" className="clickable">
                         <Link href={`/sessions/${item.id}`}>查看</Link>
                       </Button>
                     </TableCell>
@@ -95,8 +107,8 @@ export default function SessionsPage() {
               </TableBody>
             </Table>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }

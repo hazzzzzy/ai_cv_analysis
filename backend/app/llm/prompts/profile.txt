@@ -6,5 +6,11 @@
   {{"industry":"...","role":"...","years_experience":"...","skills":[...],"project_types":[...],"weakness_hints":[...]}}
 - 所有字段中文输出。
 
+面试岗位：
+{job_title}
+
+岗位介绍：
+{job_description}
+
 简历内容：
 {resume_text}

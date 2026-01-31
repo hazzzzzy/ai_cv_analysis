@@ -10,12 +10,13 @@ export type Question = {
 };
 
 export type AnalysisResult = {
-  pain_points: { title: string; evidence: string; impact: string }[];
+  pain_points: { title: string; evidence: string; impact: string; priority: number }[];
   optimization_suggestions: { title: string; actions: string[]; priority: number }[];
   improvement_directions: {
     direction: string;
     roadmap_30d: string[];
     roadmap_90d: string[];
+    priority: number;
   }[];
 };
 
@@ -23,6 +24,8 @@ export type SessionItem = {
   id: number;
   resume_id: number;
   question_count: number;
+  job_title?: string | null;
+  job_description?: string | null;
   status: string;
   current_index: number;
 };
@@ -51,11 +54,21 @@ export async function uploadResume(file: File) {
   return resp.json() as Promise<{ resume_id: number; extracted_preview: string }>;
 }
 
-export async function createSession(resumeId: number, questionCount: number) {
+export async function createSession(
+  resumeId: number,
+  questionCount: number,
+  jobTitle: string,
+  jobDescription: string
+) {
   const resp = await fetch(`${API_BASE}/api/v1/sessions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ resume_id: resumeId, question_count: questionCount }),
+    body: JSON.stringify({
+      resume_id: resumeId,
+      question_count: questionCount,
+      job_title: jobTitle,
+      job_description: jobDescription,
+    }),
   });
   if (!resp.ok) {
     const data = await resp.json().catch(() => ({}));

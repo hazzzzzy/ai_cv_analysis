@@ -30,6 +30,8 @@ async def create_session(
             session=session,
             resume_id=payload.resume_id,
             question_count=payload.question_count,
+            job_title=payload.job_title,
+            job_description=payload.job_description,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -88,6 +90,8 @@ async def get_session(
             id=db_session.id,
             resume_id=db_session.resume_id,
             question_count=db_session.question_count,
+            job_title=db_session.job_title,
+            job_description=db_session.job_description,
             status=db_session.status,
             current_index=db_session.current_index,
         ),
@@ -120,6 +124,8 @@ async def list_sessions(
                 id=item.id,
                 resume_id=item.resume_id,
                 question_count=item.question_count,
+                job_title=item.job_title,
+                job_description=item.job_description,
                 status=item.status,
                 current_index=item.current_index,
             )

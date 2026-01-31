@@ -10,6 +10,8 @@ from app.api.v1.schemas.common import AnalysisResult, Question
 class CreateSessionRequest(BaseModel):
     resume_id: int
     question_count: int = Field(ge=3, le=10)
+    job_title: str = Field(min_length=1, max_length=255)
+    job_description: str = Field(min_length=1)
 
 
 class CreateSessionResponse(BaseModel):
@@ -41,6 +43,8 @@ class SessionItem(BaseModel):
     id: int
     resume_id: int
     question_count: int
+    job_title: str | None = None
+    job_description: str | None = None
     status: str
     current_index: int
 

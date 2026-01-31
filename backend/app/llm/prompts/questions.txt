@@ -1,4 +1,4 @@
-﻿你是资深面试官。请根据候选人简历内容与画像生成 {question_count} 条专家问题。
+﻿你是资深面试官。请根据候选人简历内容、岗位信息与画像生成 {question_count} 条专家问题。
 
 要求：
 - 只输出 JSON，不要包含解释性文字。
@@ -12,6 +12,12 @@
 
 候选人画像（JSON）：
 {profile_json}
+
+面试岗位：
+{job_title}
+
+岗位介绍：
+{job_description}
 
 简历内容：
 {resume_text}
