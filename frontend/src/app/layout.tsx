@@ -1,6 +1,7 @@
 ﻿import type { Metadata } from "next";
 import { IBM_Plex_Mono, Space_Grotesk } from "next/font/google";
 import Link from "next/link";
+import { Toaster } from "sonner";
 import "./globals.css";
 
 const spaceGrotesk = Space_Grotesk({
@@ -27,6 +28,7 @@ export default function RootLayout({
   return (
     <html lang="zh-CN">
       <body className={`${spaceGrotesk.variable} ${plexMono.variable} antialiased`}>
+        <Toaster position="top-center" richColors />
         <div className="min-h-screen bg-[radial-gradient(1200px_circle_at_10%_-20%,#f7f3ff_0%,transparent_55%),radial-gradient(900px_circle_at_90%_10%,#e6f4ff_0%,transparent_45%),linear-gradient(160deg,#fdfcf8_0%,#f8fafc_55%,#eef2ff_100%)]">
           <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-6">
             <div>

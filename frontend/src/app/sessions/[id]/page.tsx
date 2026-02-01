@@ -9,7 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { getSessionDetail, MessageItem, SessionItem, AnalysisResult } from "@/lib/api";
+import { getSessionDetail, submitAnswer, MessageItem, SessionItem, AnalysisResult } from "@/lib/api";
+import { toast } from "sonner";
 
 type ViewMode = "chat" | "analysis";
 
@@ -42,10 +43,19 @@ export default function SessionDetailPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("chat");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [answer, setAnswer] = useState<string>("");
+  const [submitting, setSubmitting] = useState(false);
+  const [currentQuestion, setCurrentQuestion] = useState<Question | null>(null);
+  const [isFinalizing, setIsFinalizing] = useState(false);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const chatScrollTop = useRef<number>(0);
   const analysisScrollTop = useRef<number>(0);
+
+  const notifyError = (message: string) => {
+    setError(message);
+    toast.error(message, { id: `${Date.now()}-${Math.random().toString(16).slice(2)}` });
+  };
 
   useEffect(() => {
     let active = true;
@@ -57,7 +67,7 @@ export default function SessionDetailPage() {
       })
       .catch((err) => {
         if (!active) return;
-        setError(err instanceof Error ? err.message : "获取失败");
+        notifyError(err instanceof Error ? err.message : "获取失败");
       })
       .finally(() => {
         if (!active) return;
@@ -71,8 +81,20 @@ export default function SessionDetailPage() {
   const chatLog = useMemo<ChatItem[]>(() => {
     const mapped: ChatItem[] = messages.map((msg) => ({
       id: String(msg.id),
-      role: msg.role === "assistant" ? "assistant" : "user",
-      kind: msg.kind === "final" ? "final" : msg.kind === "answer" ? "answer" : "question",
+      role:
+        msg.role === "assistant"
+          ? "assistant"
+          : msg.role === "system"
+          ? "system"
+          : "user",
+      kind:
+        msg.kind === "status"
+          ? "status"
+          : msg.kind === "final"
+          ? "final"
+          : msg.kind === "answer"
+          ? "answer"
+          : "question",
       content: msg.content,
       meta: msg.content_json || null,
     }));
@@ -96,7 +118,12 @@ export default function SessionDetailPage() {
   const finalAnalysis = useMemo(() => {
     const finalMessage = messages.find((msg) => msg.kind === "final");
     if (finalMessage?.content_json) {
-      return finalMessage.content_json as AnalysisResult;
+      const raw = finalMessage.content_json as Partial<AnalysisResult>;
+      return {
+        pain_points: raw.pain_points ?? [],
+        optimization_suggestions: raw.optimization_suggestions ?? [],
+        improvement_directions: raw.improvement_directions ?? [],
+      } as AnalysisResult;
     }
     return null;
   }, [messages]);
@@ -107,6 +134,26 @@ export default function SessionDetailPage() {
       setViewMode("analysis");
     }
   }, [finalAnalysis]);
+
+  useEffect(() => {
+    const answered = new Set(
+      messages
+        .filter((msg) => msg.role === "user" && msg.kind === "answer")
+        .map((msg) => (msg.content_json as { question_id?: string } | null)?.question_id)
+        .filter((id): id is string => Boolean(id))
+    );
+    const pendingQuestion = messages
+      .filter((msg) => msg.role === "assistant" && msg.kind === "question")
+      .map((msg) => msg.content_json as Question | null)
+      .find((q) => q && !answered.has(q.id));
+    const fallbackQuestion =
+      messages
+        .filter((msg) => msg.role === "assistant" && msg.kind === "question")
+        .map((msg) => msg.content_json as Question | null)
+        .filter((q): q is Question => Boolean(q))
+        .slice(-1)[0] || null;
+    setCurrentQuestion(pendingQuestion || fallbackQuestion);
+  }, [messages]);
 
   useEffect(() => {
     if (!scrollRef.current) return;
@@ -123,6 +170,106 @@ export default function SessionDetailPage() {
       chatScrollTop.current = scrollRef.current.scrollTop;
     } else {
       analysisScrollTop.current = scrollRef.current.scrollTop;
+    }
+  };
+
+  const handleSubmitAnswer = async () => {
+    if (!session || session.status !== "in_progress") return;
+    if (!currentQuestion) return;
+    if (!answer.trim()) {
+      notifyError("回答不能为空");
+      return;
+    }
+    setError(null);
+    const answerText = answer.trim();
+    setAnswer("");
+    const now = Date.now();
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: now,
+        session_id: session.id,
+        seq: prev.length + 1,
+        role: "user",
+        kind: "answer",
+        content: answerText,
+        content_json: { question_id: currentQuestion.id },
+      },
+    ]);
+    setSubmitting(true);
+    const isLastAnswer =
+      session.current_index + 1 >= session.question_count ||
+      (currentQuestion && session.current_index + 1 === session.question_count);
+    if (isLastAnswer) {
+      setIsFinalizing(true);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now(),
+          session_id: session.id,
+          seq: prev.length + 1,
+          role: "system",
+          kind: "status",
+          content: "面试官正在生成最终分析…",
+          content_json: null,
+        },
+      ]);
+    }
+    try {
+      const resp = await submitAnswer(session.id, currentQuestion.id, answerText);
+      if (resp.status === "completed") {
+        setAnalysis(resp.final_analysis);
+        setViewMode("analysis");
+        setSession((prev) =>
+          prev
+            ? { ...prev, status: "completed", current_index: prev.current_index + 1 }
+            : prev
+        );
+        setMessages((prev) =>
+          prev.filter((msg) => !(msg.role === "system" && msg.kind === "status"))
+        );
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: now + 1,
+            session_id: session.id,
+            seq: prev.length + 2,
+            role: "assistant",
+            kind: "final",
+            content: "最终分析已生成。",
+            content_json: resp.final_analysis as unknown as Record<string, unknown>,
+          },
+        ]);
+      } else {
+        setSession((prev) =>
+          prev
+            ? { ...prev, current_index: resp.current_index, status: "in_progress" }
+            : prev
+        );
+        setMessages((prev) =>
+          prev.filter((msg) => !(msg.role === "system" && msg.kind === "status"))
+        );
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: now + 1,
+            session_id: session.id,
+            seq: prev.length + 2,
+            role: "assistant",
+            kind: "question",
+            content: resp.next_question.question,
+            content_json: resp.next_question as unknown as Record<string, unknown>,
+          },
+        ]);
+      }
+    } catch (err) {
+      notifyError(err instanceof Error ? err.message : "提交失败");
+      setMessages((prev) =>
+        prev.filter((msg) => !(msg.role === "system" && msg.kind === "status"))
+      );
+    } finally {
+      setSubmitting(false);
+      setIsFinalizing(false);
     }
   };
 
@@ -145,17 +292,9 @@ export default function SessionDetailPage() {
     );
   }
 
-  if (error || !session) {
-    return (
-      <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-600">
-        {error || "会话不存在"}
-      </div>
-    );
-  }
-
   return (
     <div className="flex h-screen min-h-0 flex-col overflow-hidden px-2 py-2">
-
+      
 
       <div className="grid h-[calc(90vh-96px)] min-h-0 gap-3 lg:grid-cols-[minmax(260px,360px)_1fr]">
         <aside className="panel-shell sidebar-scroll h-full">
@@ -165,12 +304,14 @@ export default function SessionDetailPage() {
           </div>
           <div className="panel-section space-y-3 text-sm text-slate-600">
             <div>
-              会话 ID：<span className="font-mono">#{session.id}</span>
+              会话 ID：<span className="font-mono">{session ? `#${session.id}` : "--"}</span>
             </div>
             <div>
-              简历 ID：<span className="font-mono">{session.resume_id}</span>
+              简历 ID：<span className="font-mono">{session ? session.resume_id : "--"}</span>
             </div>
-            <Badge variant="outline">{STATUS_LABEL[session.status] || "面试中"}</Badge>
+            <Badge variant="outline">
+              {session ? (STATUS_LABEL[session.status] || "面试中") : "未知"}
+            </Badge>
             <Button asChild variant="outline" className="w-full clickable">
               <Link href="/sessions">返回列表</Link>
             </Button>
@@ -179,15 +320,20 @@ export default function SessionDetailPage() {
             <div className="panel-title">面试配置（只读）</div>
             <div className="space-y-2">
               <label className="form-label">问题数量</label>
-              <Input value={String(session.question_count)} readOnly />
+              <Input value={session ? String(session.question_count) : ""} readOnly />
             </div>
             <div className="space-y-2">
               <label className="form-label">面试岗位</label>
-              <Input value={session.job_title || "未填写"} readOnly />
+              <Input value={session ? (session.job_title || "未填写") : ""} readOnly />
             </div>
             <div className="space-y-2">
               <label className="form-label">岗位介绍</label>
-              <Textarea value={session.job_description || "未填写岗位介绍"} readOnly rows={6} className="h-28 resize-none" />
+              <Textarea
+                value={session ? (session.job_description || "未填写岗位介绍") : ""}
+                readOnly
+                rows={6}
+                className="h-28 resize-none"
+              />
             </div>
           </div>
         </aside>
@@ -217,49 +363,83 @@ export default function SessionDetailPage() {
           </div>
 
           <div className="panel-shell flex h-full min-h-0 flex-col overflow-hidden">
+            {!session && (
+              <div className="flex-1 p-4 text-sm text-slate-500">
+                会话不存在或加载失败，请返回列表重试。
+              </div>
+            )}
             {viewMode === "chat" && (
-              <div
-                ref={scrollRef}
-                onScroll={handleScroll}
-                className="flex-1 space-y-3 overflow-auto px-4 py-4"
-              >
-                {chatLog.length === 0 && (
-                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 p-4 text-sm text-slate-500">
-                    暂无聊天记录。
-                  </div>
-                )}
-                {chatLog.map((item) => {
-                  if (item.role === "system") {
+              <div className="flex h-full flex-col">
+                <div
+                  ref={scrollRef}
+                  onScroll={handleScroll}
+                  className="flex-1 space-y-3 overflow-auto px-4 py-4"
+                >
+                  {chatLog.length === 0 && (
+                    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 p-4 text-sm text-slate-500">
+                      暂无聊天记录。
+                    </div>
+                  )}
+                  {chatLog.map((item) => {
+                    if (item.role === "system") {
+                      return (
+                        <div key={item.id} className="message-system">
+                          <div className="message-system-bubble">
+                            <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
+                            {item.content}
+                          </div>
+                        </div>
+                      );
+                    }
                     return (
-                      <div key={item.id} className="message-system">
-                        <div className="message-system-bubble">
-                          <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
-                          {item.content}
+                      <div
+                        key={item.id}
+                        className={`flex ${item.role === "assistant" ? "justify-start" : "justify-end"}`}
+                      >
+                        <div
+                          className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm shadow-sm message-pop ${
+                            item.role === "assistant"
+                              ? "bg-slate-100 text-slate-900"
+                              : "bg-emerald-100 text-emerald-900"
+                          }`}
+                        >
+                          <div className="text-xs text-slate-500">
+                            {item.role === "assistant" ? "面试官" : "你"} · {item.kind}
+                          </div>
+                          <p className="mt-1 whitespace-pre-wrap leading-relaxed">{item.content}</p>
                         </div>
                       </div>
                     );
-                  }
-                  return (
-                    <div
-                      key={item.id}
-                      className={`flex ${item.role === "assistant" ? "justify-start" : "justify-end"}`}
+                  })}
+                  <div ref={chatEndRef} />
+                </div>
+                {session?.status === "in_progress" && (
+                  <div className="border-t border-slate-200 bg-white/95 px-4 py-4">
+                  <div className="text-xs text-slate-500">继续作答</div>
+                  <Textarea
+                    rows={4}
+                    placeholder="请输入你的回答，建议围绕背景/行动/结果展开"
+                    value={answer}
+                    onChange={(event) => setAnswer(event.target.value)}
+                    disabled={submitting || session?.status !== "in_progress"}
+                    className="input-focus-ring clickable disabled:not-allowed mt-2 h-24 resize-none"
+                  />
+                  <div className="mt-3 flex flex-wrap gap-3">
+                    <Button
+                      disabled={submitting || session?.status !== "in_progress" || !currentQuestion}
+                      onClick={handleSubmitAnswer}
+                      className="clickable disabled:not-allowed"
                     >
-                      <div
-                        className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm shadow-sm message-pop ${
-                          item.role === "assistant"
-                            ? "bg-slate-100 text-slate-900"
-                            : "bg-emerald-100 text-emerald-900"
-                        }`}
-                      >
-                        <div className="text-xs text-slate-500">
-                          {item.role === "assistant" ? "面试官" : "你"} · {item.kind}
-                        </div>
-                        <p className="mt-1 whitespace-pre-wrap leading-relaxed">{item.content}</p>
-                      </div>
+                      {submitting ? "提交中..." : "提交回答"}
+                    </Button>
+                    <div className="text-xs text-slate-500">
+                      {session?.status === "in_progress"
+                        ? "当前可继续答题"
+                        : "会话已结束"}
                     </div>
-                  );
-                })}
-                <div ref={chatEndRef} />
+                  </div>
+                  </div>
+                )}
               </div>
             )}
 

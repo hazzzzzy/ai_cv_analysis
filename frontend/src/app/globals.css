@@ -252,6 +252,14 @@
   @apply flex items-center gap-3 rounded-full border border-slate-200 bg-white px-4 py-2 text-xs text-slate-600 shadow-sm;
 }
 
+.table-sticky thead {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+}
+
 @media (max-width: 1024px) {
   .sidebar-scroll {
     max-height: none;

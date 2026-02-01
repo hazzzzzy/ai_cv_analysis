@@ -14,6 +14,7 @@ from app.api.v1.schemas.sessions import (
     SubmitAnswerResponseCompleted,
     SubmitAnswerResponseInProgress,
 )
+from app.db.models import Resume
 from app.db.session import get_async_session
 from app.services.session_service import SessionFailedError, SessionService
 
@@ -85,15 +86,19 @@ async def get_session(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    resume = await session.get(Resume, db_session.resume_id)
+
     return SessionDetailResponse(
         session=SessionItem(
             id=db_session.id,
             resume_id=db_session.resume_id,
+            resume_filename=resume.filename if resume else None,
             question_count=db_session.question_count,
             job_title=db_session.job_title,
             job_description=db_session.job_description,
             status=db_session.status,
             current_index=db_session.current_index,
+            created_at=db_session.created_at,
         ),
         messages=[
             {
@@ -121,15 +126,17 @@ async def list_sessions(
     return SessionListResponse(
         items=[
             SessionItem(
-                id=item.id,
-                resume_id=item.resume_id,
-                question_count=item.question_count,
-                job_title=item.job_title,
-                job_description=item.job_description,
-                status=item.status,
-                current_index=item.current_index,
+                id=db_session.id,
+                resume_id=db_session.resume_id,
+                resume_filename=resume_filename,
+                question_count=db_session.question_count,
+                job_title=db_session.job_title,
+                job_description=db_session.job_description,
+                status=db_session.status,
+                current_index=db_session.current_index,
+                created_at=db_session.created_at,
             )
-            for item in sessions
+            for db_session, resume_filename in sessions
         ],
         total=total,
     )

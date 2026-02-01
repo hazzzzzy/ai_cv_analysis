@@ -23,11 +23,13 @@ export type AnalysisResult = {
 export type SessionItem = {
   id: number;
   resume_id: number;
+  resume_filename?: string | null;
   question_count: number;
   job_title?: string | null;
   job_description?: string | null;
   status: string;
   current_index: number;
+  created_at: string;
 };
 
 export type MessageItem = {

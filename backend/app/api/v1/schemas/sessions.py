@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+from datetime import datetime
 from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field
@@ -42,11 +43,13 @@ SubmitAnswerResponse = Union[SubmitAnswerResponseInProgress, SubmitAnswerRespons
 class SessionItem(BaseModel):
     id: int
     resume_id: int
+    resume_filename: str | None = None
     question_count: int
     job_title: str | None = None
     job_description: str | None = None
     status: str
     current_index: int
+    created_at: datetime
 
 
 class MessageItem(BaseModel):

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
+import { toast } from "sonner";
 import {
   AnalysisResult,
   Question,
@@ -91,7 +92,6 @@ export default function HomePage() {
   const sidebarRef = useRef<HTMLDivElement | null>(null);
   const jobTitleRef = useRef<HTMLInputElement | null>(null);
   const jobDescRef = useRef<HTMLTextAreaElement | null>(null);
-
   const isEditable = appState === "idle" || appState === "uploaded" || appState === "failed";
   const isLocked = appState === "preparing" || appState === "discussing";
   const canStart = Boolean(resumeId && jobTitle.trim() && jobDescription.trim());
@@ -186,7 +186,9 @@ export default function HomePage() {
       setAppState("uploaded");
       setUploadProgress(100);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "上传失败");
+      const message = err instanceof Error ? err.message : "上传失败";
+      setError(message);
+      toast.error(message);
       setAppState("failed");
     } finally {
       clearInterval(timer);
@@ -239,6 +241,13 @@ export default function HomePage() {
       ? "jobDescription"
       : null;
     if (firstError) {
+      const message =
+        firstError == "resume"
+          ? "?????"
+          : firstError == "jobTitle"
+          ? "???????"
+          : "???????";
+      toast.error(message);
       focusField(firstError);
       return false;
     }
@@ -275,7 +284,9 @@ export default function HomePage() {
       ]);
       setAppState("interviewing");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "创建会话失败");
+      const message = err instanceof Error ? err.message : "创建会话失败";
+      setError(message);
+      toast.error(message);
       setAppState("failed");
     } finally {
       setLoading(false);
@@ -285,7 +296,7 @@ export default function HomePage() {
   const handleSubmitAnswer = async () => {
     if (!sessionId || !currentQuestion) return;
     if (!answer.trim()) {
-      setError("回答不能为空");
+      toast.error("回答不能为空");
       return;
     }
     setError(null);
@@ -330,7 +341,9 @@ export default function HomePage() {
         ]);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "提交失败");
+      const message = err instanceof Error ? err.message : "提交失败";
+      setError(message);
+      toast.error(message);
       setAppState("failed");
     } finally {
       setLoading(false);
@@ -372,7 +385,6 @@ export default function HomePage() {
 
   return (
     <div className="flex h-screen min-h-0 flex-col overflow-hidden px-2 py-2">
-
       <div className="grid h-[calc(90vh-96px)] min-h-0 gap-3 lg:grid-cols-[minmax(260px,360px)_1fr]">
         <aside className="panel-shell sidebar-scroll h-full" ref={sidebarRef}>
           <div className="panel-section">
@@ -536,11 +548,6 @@ export default function HomePage() {
         </aside>
 
         <main className="main-fixed h-full min-h-0 space-y-2">
-          {error && (
-            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-              {error}
-            </div>
-          )}
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-sm font-semibold text-slate-900">对话流</div>
             <div className="flex flex-wrap gap-2">

@@ -277,15 +277,23 @@ class SessionService:
         return db_session, messages
 
     @staticmethod
-    async def list_sessions(session: AsyncSession, limit: int, offset: int) -> Tuple[List[Session], int]:
+    async def list_sessions(
+        session: AsyncSession,
+        limit: int,
+        offset: int,
+    ) -> Tuple[List[tuple[Session, str | None]], int]:
         total_result = await session.execute(select(func.count(Session.id)))
         total = int(total_result.scalar_one())
 
         result = await session.execute(
-            select(Session).order_by(Session.created_at.desc()).limit(limit).offset(offset)
+            select(Session, Resume.filename)
+            .join(Resume, Resume.id == Session.resume_id, isouter=True)
+            .order_by(Session.created_at.desc())
+            .limit(limit)
+            .offset(offset)
         )
-        sessions = list(result.scalars().all())
-        return sessions, total
+        rows = list(result.all())
+        return rows, total
 
     @staticmethod
     async def run_full_interview(
