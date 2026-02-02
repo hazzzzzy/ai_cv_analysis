@@ -243,10 +243,10 @@ export default function HomePage() {
     if (firstError) {
       const message =
         firstError == "resume"
-          ? "?????"
+          ? "请上传简历"
           : firstError == "jobTitle"
-          ? "???????"
-          : "???????";
+          ? "请填写面试岗位"
+          : "请填写岗位介绍";
       toast.error(message);
       focusField(firstError);
       return false;
@@ -617,34 +617,36 @@ export default function HomePage() {
                   })}
                   <div ref={chatEndRef} />
                 </div>
-                <div className="border-t border-slate-200 bg-white/95 px-4 py-4">
-                  <div className="text-xs text-slate-500">当前回答</div>
-                  <Textarea
-                    rows={4}
-                    placeholder="请输入你的回答，建议围绕背景/行动/结果展开"
-                    value={answer}
-                    onChange={(event) => setAnswer(event.target.value)}
-                    disabled={loading || isLocked || appState !== "interviewing"}
-                    className="input-focus-ring clickable disabled:not-allowed mt-2 h-24 resize-none"
-                  />
-                  <div className="mt-3 flex flex-wrap gap-3">
-                    <Button
+                {appState === "interviewing" && (
+                  <div className="border-t border-slate-200 bg-white/95 px-4 py-4">
+                    <div className="text-xs text-slate-500">当前回答</div>
+                    <Textarea
+                      rows={4}
+                      placeholder="请输入你的回答，建议围绕背景/行动/结果展开"
+                      value={answer}
+                      onChange={(event) => setAnswer(event.target.value)}
                       disabled={loading || isLocked || appState !== "interviewing"}
-                      onClick={handleSubmitAnswer}
-                      className="clickable disabled:not-allowed"
-                    >
-                      {loading ? "提交中..." : "提交回答"}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={resetAll}
-                      disabled={loading}
-                      className="clickable disabled:not-allowed"
-                    >
-                      重新开始
-                    </Button>
+                      className="input-focus-ring clickable disabled:not-allowed mt-2 h-24 resize-none"
+                    />
+                    <div className="mt-3 flex flex-wrap gap-3">
+                      <Button
+                        disabled={loading || isLocked || appState !== "interviewing"}
+                        onClick={handleSubmitAnswer}
+                        className="clickable disabled:not-allowed"
+                      >
+                        {loading ? "提交中..." : "提交回答"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={resetAll}
+                        disabled={loading}
+                        className="clickable disabled:not-allowed"
+                      >
+                        重新开始
+                      </Button>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             )}
 

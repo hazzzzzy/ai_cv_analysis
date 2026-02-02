@@ -24,7 +24,8 @@ export default function SessionsPage() {
         if (!filename) return "未知简历";
         const trimmed = filename.trim();
         if (!trimmed) return "未知简历";
-        return trimmed.replace(/\.[^/.]+$/, "");
+        return trimmed;
+        // return trimmed.replace(/\.[^/.]+$/, "");
     };
     const formatTime = (value: string) => {
         const date = new Date(value);

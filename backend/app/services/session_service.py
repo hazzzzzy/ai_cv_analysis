@@ -2,7 +2,7 @@
 
 from typing import List, Tuple
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.schemas.common import Question
@@ -86,7 +86,7 @@ class SessionService:
         await session.refresh(new_session)
 
         try:
-            questions, raw_output = _graph.generate_questions(
+            questions, raw_output = await _graph.generate_questions(
                 resume_text=resume.extracted_text or '',
                 question_count=question_count,
                 job_title=job_title,
@@ -199,6 +199,30 @@ class SessionService:
                 await session.commit()
             return 'in_progress', db_session.current_index, next_question, None
 
+        if answer_added:
+            await session.commit()
+
+        status_exists = await session.execute(
+            select(Message.id).where(
+                Message.session_id == session_id,
+                Message.role == 'system',
+                Message.kind == 'status',
+                Message.content == '面试官正在生成最终分析…',
+            )
+        )
+        if status_exists.scalar_one_or_none() is None:
+            status_seq = await SessionService._next_message_seq(session, session_id)
+            status_message = Message(
+                session_id=session_id,
+                seq=status_seq,
+                role='system',
+                kind='status',
+                content='面试官正在生成最终分析…',
+                content_json=None,
+            )
+            session.add(status_message)
+            await session.commit()
+
         db_session.status = 'completed'
         answer_result = await session.execute(
             select(Message).where(
@@ -227,7 +251,7 @@ class SessionService:
         ]
         try:
             resume = await session.get(Resume, db_session.resume_id)
-            final_result, raw_output = _graph.finalize_analysis(
+            final_result, raw_output = await _graph.finalize_analysis(
                 resume_text=(resume.extracted_text if resume else ''),
                 questions=[Question(**item) for item in question_models],
                 answers=answers,
@@ -243,6 +267,14 @@ class SessionService:
             raw_model_output=raw_output,
         )
         session.add(analysis)
+        await session.execute(
+            delete(Message).where(
+                Message.session_id == session_id,
+                Message.role == 'system',
+                Message.kind == 'status',
+                Message.content == '面试官正在生成最终分析…',
+            )
+        )
         final_exists = await session.execute(
             select(Message.id).where(
                 Message.session_id == session_id,

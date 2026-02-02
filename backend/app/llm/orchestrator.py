@@ -71,14 +71,17 @@ class InterviewGraph:
         self._analysis_graph = self._build_analysis_graph()
 
     def _load_prompt(self, name: str) -> str:
-        path = Path(__file__).resolve().parent / 'prompts' / name
-        return path.read_text(encoding='utf-8')
+        path = Path(__file__).resolve().parent / "prompts" / name
+        return path.read_text(encoding="utf-8")
 
-    def _invoke_json(self, prompt: str, adapter: TypeAdapter, max_retries: int) -> LlmResult:
+    def _invoke_json(
+        self, prompt: str, adapter: TypeAdapter, max_retries: int
+    ) -> LlmResult:
         last_error: Exception | None = None
+        raw = ""
         for _ in range(max_retries + 1):
             response = self._chat.invoke([HumanMessage(content=prompt)])
-            raw = response.content if hasattr(response, 'content') else str(response)
+            raw = response.content if hasattr(response, "content") else str(response)
             try:
                 data = parse_json_strict(raw)
                 value = adapter.validate_python(data)
@@ -86,178 +89,207 @@ class InterviewGraph:
             except (JsonParseError, ValidationError) as exc:
                 last_error = exc
                 continue
-        raise ValueError(f'LLM 输出校验失败: {last_error}; raw={raw[:500]}') from last_error
+        raise ValueError(
+            f"LLM 输出校验失败: {last_error}; raw={raw[:500]}"
+        ) from last_error
+
+    async def _invoke_json_async(
+        self, prompt: str, adapter: TypeAdapter, max_retries: int
+    ) -> LlmResult:
+        last_error: Exception | None = None
+        raw = ""
+        for _ in range(max_retries + 1):
+            response = await self._chat.ainvoke([HumanMessage(content=prompt)])
+            raw = response.content if hasattr(response, "content") else str(response)
+            try:
+                data = parse_json_strict(raw)
+                value = adapter.validate_python(data)
+                return LlmResult(value=value, raw=raw)
+            except (JsonParseError, ValidationError) as exc:
+                last_error = exc
+                continue
+        raise ValueError(
+            f"LLM 输出校验失败: {last_error}; raw={raw[:500]}"
+        ) from last_error
 
     def _build_questions_graph(self):
         graph = StateGraph(QuestionState)
 
-        def profile_infer(state: QuestionState) -> dict:
-            template = self._load_prompt('profile.txt')
+        async def profile_infer(state: QuestionState) -> dict:
+            template = self._load_prompt("profile.txt")
             prompt = template.format(
-                resume_text=state['resume_text'],
-                job_title=state['job_title'],
-                job_description=state['job_description'],
+                resume_text=state["resume_text"],
+                job_title=state["job_title"],
+                job_description=state["job_description"],
             )
             adapter = TypeAdapter(Profile)
-            result = self._invoke_json(prompt, adapter, max_retries=2)
-            return {'profile_json': result.value.model_dump(), 'raw_output': result.raw}
+            result = await self._invoke_json_async(prompt, adapter, max_retries=2)
+            return {"profile_json": result.value.model_dump(), "raw_output": result.raw}
 
-        def generate_questions(state: QuestionState) -> dict:
-            template = self._load_prompt('questions.txt')
+        async def generate_questions(state: QuestionState) -> dict:
+            template = self._load_prompt("questions.txt")
             prompt = template.format(
-                resume_text=state['resume_text'],
-                question_count=state['question_count'],
-                profile_json=json.dumps(state.get('profile_json', {}), ensure_ascii=False),
-                job_title=state['job_title'],
-                job_description=state['job_description'],
+                resume_text=state["resume_text"],
+                question_count=state["question_count"],
+                profile_json=json.dumps(
+                    state.get("profile_json", {}), ensure_ascii=False
+                ),
+                job_title=state["job_title"],
+                job_description=state["job_description"],
             )
             adapter = TypeAdapter(List[Question])
-            result = self._invoke_json(prompt, adapter, max_retries=2)
-            return {'questions': result.value, 'raw_output': result.raw}
+            result = await self._invoke_json_async(prompt, adapter, max_retries=2)
+            return {"questions": result.value, "raw_output": result.raw}
 
-        graph.add_node('profile_infer', profile_infer)
-        graph.add_node('generate_questions', generate_questions)
-        graph.add_edge(START, 'profile_infer')
-        graph.add_edge('profile_infer', 'generate_questions')
-        graph.add_edge('generate_questions', END)
+        graph.add_node("profile_infer", profile_infer)
+        graph.add_node("generate_questions", generate_questions)
+        graph.add_edge(START, "profile_infer")
+        graph.add_edge("profile_infer", "generate_questions")
+        graph.add_edge("generate_questions", END)
         return graph.compile()
 
     def _build_analysis_graph(self):
         graph = StateGraph(AnalysisState)
 
-        def finalize_analysis(state: AnalysisState) -> dict:
-            template = self._load_prompt('analysis.txt')
+        async def finalize_analysis(state: AnalysisState) -> dict:
+            template = self._load_prompt("analysis.txt")
             prompt = template.format(
-                resume_text=state['resume_text'],
-                job_title=state['job_title'],
-                job_description=state['job_description'],
+                resume_text=state["resume_text"],
+                job_title=state["job_title"],
+                job_description=state["job_description"],
                 questions_json=json.dumps(
-                    [q.model_dump() for q in state['questions']],
+                    [q.model_dump() for q in state["questions"]],
                     ensure_ascii=False,
                 ),
-                answers_json=json.dumps(state['answers'], ensure_ascii=False),
+                answers_json=json.dumps(state["answers"], ensure_ascii=False),
             )
             adapter = TypeAdapter(AnalysisResult)
-            result = self._invoke_json(prompt, adapter, max_retries=2)
-            return {'final_analysis': result.value, 'raw_output': result.raw}
+            result = await self._invoke_json_async(prompt, adapter, max_retries=2)
+            return {"final_analysis": result.value, "raw_output": result.raw}
 
-        graph.add_node('finalize_analysis', finalize_analysis)
-        graph.add_edge(START, 'finalize_analysis')
-        graph.add_edge('finalize_analysis', END)
+        graph.add_node("finalize_analysis", finalize_analysis)
+        graph.add_edge(START, "finalize_analysis")
+        graph.add_edge("finalize_analysis", END)
         return graph.compile()
 
     def _build_interview_graph(self):
         graph = StateGraph(InterviewState)
 
         def parse_resume(state: InterviewState) -> dict:
-            return {'resume_text': state.get('resume_text', '')}
+            return {"resume_text": state.get("resume_text", "")}
 
         def profile_infer(state: InterviewState) -> dict:
-            template = self._load_prompt('profile.txt')
+            template = self._load_prompt("profile.txt")
             prompt = template.format(
-                resume_text=state['resume_text'],
-                job_title=state['job_title'],
-                job_description=state['job_description'],
+                resume_text=state["resume_text"],
+                job_title=state["job_title"],
+                job_description=state["job_description"],
             )
             adapter = TypeAdapter(Profile)
             result = self._invoke_json(prompt, adapter, max_retries=2)
-            return {'profile_json': result.value.model_dump()}
+            return {"profile_json": result.value.model_dump()}
 
         def generate_questions(state: InterviewState) -> dict:
-            template = self._load_prompt('questions.txt')
+            template = self._load_prompt("questions.txt")
             prompt = template.format(
-                resume_text=state['resume_text'],
-                question_count=state['question_count'],
-                profile_json=json.dumps(state.get('profile_json', {}), ensure_ascii=False),
-                job_title=state['job_title'],
-                job_description=state['job_description'],
+                resume_text=state["resume_text"],
+                question_count=state["question_count"],
+                profile_json=json.dumps(
+                    state.get("profile_json", {}), ensure_ascii=False
+                ),
+                job_title=state["job_title"],
+                job_description=state["job_description"],
             )
             adapter = TypeAdapter(List[Question])
             result = self._invoke_json(prompt, adapter, max_retries=2)
-            return {'questions': result.value, 'current_index': 0}
+            return {"questions": result.value, "current_index": 0}
 
         def next_question(state: InterviewState) -> dict:
-            if not state.get('questions'):
-                return {'current_question': None}
-            return {'current_question': state['questions'][state['current_index']].model_dump()}
+            if not state.get("questions"):
+                return {"current_question": None}
+            return {
+                "current_question": state["questions"][
+                    state["current_index"]
+                ].model_dump()
+            }
 
         def record_answer(state: InterviewState) -> dict:
-            current = state.get('current_question')
+            current = state.get("current_question")
             if not current:
                 return {}
-            answers = list(state.get('answers', []))
-            answer_list = state.get('answers_input', [])
-            answer_text = ''
-            if state['current_index'] < len(answer_list):
-                answer_text = answer_list[state['current_index']]
-            answers.append({'question_id': current.get('id'), 'answer': answer_text})
-            return {'answers': answers, 'current_index': state['current_index'] + 1}
+            answers = list(state.get("answers", []))
+            answer_list = state.get("answers_input", [])
+            answer_text = ""
+            if state["current_index"] < len(answer_list):
+                answer_text = answer_list[state["current_index"]]
+            answers.append({"question_id": current.get("id"), "answer": answer_text})
+            return {"answers": answers, "current_index": state["current_index"] + 1}
 
         def finalize_analysis(state: InterviewState) -> dict:
-            template = self._load_prompt('analysis.txt')
+            template = self._load_prompt("analysis.txt")
             prompt = template.format(
-                resume_text=state['resume_text'],
-                job_title=state['job_title'],
-                job_description=state['job_description'],
+                resume_text=state["resume_text"],
+                job_title=state["job_title"],
+                job_description=state["job_description"],
                 questions_json=json.dumps(
-                    [q.model_dump() for q in state['questions']],
+                    [q.model_dump() for q in state["questions"]],
                     ensure_ascii=False,
                 ),
-                answers_json=json.dumps(state['answers'], ensure_ascii=False),
+                answers_json=json.dumps(state["answers"], ensure_ascii=False),
             )
             adapter = TypeAdapter(AnalysisResult)
             result = self._invoke_json(prompt, adapter, max_retries=2)
-            return {'final_analysis': result.value}
+            return {"final_analysis": result.value}
 
         def should_continue(state: InterviewState) -> str:
-            if state['current_index'] < state['question_count']:
-                return 'next_question'
-            return 'finalize_analysis'
+            if state["current_index"] < state["question_count"]:
+                return "next_question"
+            return "finalize_analysis"
 
-        graph.add_node('parse_resume', parse_resume)
-        graph.add_node('profile_infer', profile_infer)
-        graph.add_node('generate_questions', generate_questions)
-        graph.add_node('next_question', next_question)
-        graph.add_node('record_answer', record_answer)
-        graph.add_node('finalize_analysis', finalize_analysis)
+        graph.add_node("parse_resume", parse_resume)
+        graph.add_node("profile_infer", profile_infer)
+        graph.add_node("generate_questions", generate_questions)
+        graph.add_node("next_question", next_question)
+        graph.add_node("record_answer", record_answer)
+        graph.add_node("finalize_analysis", finalize_analysis)
 
-        graph.add_edge(START, 'parse_resume')
-        graph.add_edge('parse_resume', 'profile_infer')
-        graph.add_edge('profile_infer', 'generate_questions')
-        graph.add_edge('generate_questions', 'next_question')
-        graph.add_edge('next_question', 'record_answer')
+        graph.add_edge(START, "parse_resume")
+        graph.add_edge("parse_resume", "profile_infer")
+        graph.add_edge("profile_infer", "generate_questions")
+        graph.add_edge("generate_questions", "next_question")
+        graph.add_edge("next_question", "record_answer")
         graph.add_conditional_edges(
-            'record_answer',
+            "record_answer",
             should_continue,
             {
-                'next_question': 'next_question',
-                'finalize_analysis': 'finalize_analysis',
+                "next_question": "next_question",
+                "finalize_analysis": "finalize_analysis",
             },
         )
-        graph.add_edge('finalize_analysis', END)
+        graph.add_edge("finalize_analysis", END)
         return graph.compile()
 
-    def generate_questions(
+    async def generate_questions(
         self,
         resume_text: str,
         question_count: int,
         job_title: str,
         job_description: str,
     ) -> tuple[List[Question], str]:
-        result = self._questions_graph.invoke(
+        result = await self._questions_graph.ainvoke(
             {
-                'resume_text': resume_text,
-                'question_count': question_count,
-                'job_title': job_title,
-                'job_description': job_description,
-                'profile_json': {},
-                'questions': [],
-                'raw_output': '',
+                "resume_text": resume_text,
+                "question_count": question_count,
+                "job_title": job_title,
+                "job_description": job_description,
+                "profile_json": {},
+                "questions": [],
+                "raw_output": "",
             }
         )
-        return result['questions'], result['raw_output']
+        return result["questions"], result["raw_output"]
 
-    def finalize_analysis(
+    async def finalize_analysis(
         self,
         resume_text: str,
         questions: List[Question],
@@ -265,22 +297,22 @@ class InterviewGraph:
         job_title: str,
         job_description: str,
     ) -> tuple[AnalysisResult, str]:
-        result = self._analysis_graph.invoke(
+        result = await self._analysis_graph.ainvoke(
             {
-                'resume_text': resume_text,
-                'job_title': job_title,
-                'job_description': job_description,
-                'questions': questions,
-                'answers': answers,
-                'final_analysis': AnalysisResult(
+                "resume_text": resume_text,
+                "job_title": job_title,
+                "job_description": job_description,
+                "questions": questions,
+                "answers": answers,
+                "final_analysis": AnalysisResult(
                     pain_points=[],
                     optimization_suggestions=[],
                     improvement_directions=[],
                 ),
-                'raw_output': '',
+                "raw_output": "",
             }
         )
-        return result['final_analysis'], result['raw_output']
+        return result["final_analysis"], result["raw_output"]
 
     def build_full_graph(self):
         return self._build_interview_graph()
@@ -296,18 +328,18 @@ class InterviewGraph:
         graph = self._build_interview_graph()
         result = graph.invoke(
             {
-                'resume_text': resume_text,
-                'question_count': question_count,
-                'job_title': job_title,
-                'job_description': job_description,
-                'expert_domains': [],
-                'profile_json': {},
-                'questions': [],
-                'answers': [],
-                'answers_input': answers_input,
-                'current_index': 0,
-                'current_question': None,
-                'final_analysis': None,
+                "resume_text": resume_text,
+                "question_count": question_count,
+                "job_title": job_title,
+                "job_description": job_description,
+                "expert_domains": [],
+                "profile_json": {},
+                "questions": [],
+                "answers": [],
+                "answers_input": answers_input,
+                "current_index": 0,
+                "current_question": None,
+                "final_analysis": None,
             }
         )
-        return result['final_analysis']
+        return result["final_analysis"]
