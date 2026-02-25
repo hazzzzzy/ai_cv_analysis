@@ -15,6 +15,7 @@ import {
     MessageItem,
     SessionItem,
     AnalysisResult,
+    Question,
 } from "@/lib/api";
 import { toast } from "sonner";
 

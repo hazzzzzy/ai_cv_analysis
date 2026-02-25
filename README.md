@@ -2,6 +2,10 @@
 
 本仓库包含后端（FastAPI + MySQL + LangGraph）与前端（Next.js + shadcn/ui）两部分，用于简历上传、生成追问、逐题作答以及最终诊断建议输出。
 
+## 预览
+
+[https://resume.bro9.vip/](https://resume.bro9.vip/)
+
 ## 目录结构
 
 - `backend/` 后端服务（FastAPI、SQLAlchemy async、Alembic、LangGraph）
