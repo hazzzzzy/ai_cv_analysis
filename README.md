@@ -2,6 +2,7 @@
 
 A full-stack AI web app: upload a resume, answer a short set of AI-generated interview questions, and receive a structured diagnosis of weak points and concrete improvements.
 
+**Live demo:** https://resume.bro9.vip
 
 ---
 
